@@ -83,7 +83,7 @@ func SingleView() MenuFn {
 	ui.DefaultEvtStream.ResetHandlers()
 	defer ui.DefaultEvtStream.ResetHandlers()
 
-	ex := single.NewSingle(c.Id)
+	ex := single.NewSingle()
 	c.SetUpdater(ex)
 
 	ex.Align()
@@ -189,6 +189,10 @@ func Display() bool {
 	})
 	ui.Handle("/sys/kbd/s", func(ui.Event) {
 		menu = SortMenu
+		ui.StopLoop()
+	})
+	ui.Handle("/sys/kbd/c", func(ui.Event) {
+		menu = ColumnsMenu
 		ui.StopLoop()
 	})
 	ui.Handle("/sys/kbd/S", func(ui.Event) {

@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/bcicen/ctop/config"
@@ -26,6 +27,7 @@ var helpDialog = []menu.Item{
 	{"[o] - open single view", ""},
 	{"[l] - view container logs ([t] to toggle timestamp when open)", ""},
 	{"[e] - exec shell", ""},
+	{"[c] - configure columns", ""},
 	{"[S] - save current configuration to file", ""},
 	{"[q] - exit ctop", ""},
 }
@@ -104,7 +106,90 @@ func SortMenu() MenuFn {
 	HandleKeys("exit", ui.StopLoop)
 
 	ui.Handle("/sys/kbd/<enter>", func(ui.Event) {
-		config.Update("sortField", m.SelectedItem().Val)
+		config.Update("sortField", m.SelectedValue())
+		ui.StopLoop()
+	})
+
+	ui.Render(m)
+	ui.Loop()
+	return nil
+}
+
+func ColumnsMenu() MenuFn {
+	const (
+		enabledStr  = "[X]"
+		disabledStr = "[ ]"
+		padding     = 2
+	)
+
+	ui.Clear()
+	ui.DefaultEvtStream.ResetHandlers()
+	defer ui.DefaultEvtStream.ResetHandlers()
+
+	m := menu.NewMenu()
+	m.Selectable = true
+	m.SortItems = false
+	m.BorderLabel = "Columns"
+	m.SubText = "Re-order: <Page Up> / <Page Down>"
+
+	rebuild := func() {
+		// get padding for right alignment of enabled status
+		var maxLen int
+		for _, col := range config.GlobalColumns {
+			if len(col.Label) > maxLen {
+				maxLen = len(col.Label)
+			}
+		}
+		maxLen += padding
+
+		// rebuild menu items
+		m.ClearItems()
+		for _, col := range config.GlobalColumns {
+			txt := col.Label + strings.Repeat(" ", maxLen-len(col.Label))
+			if col.Enabled {
+				txt += enabledStr
+			} else {
+				txt += disabledStr
+			}
+			m.AddItems(menu.Item{col.Name, txt})
+		}
+	}
+
+	upFn := func() {
+		config.ColumnLeft(m.SelectedValue())
+		m.Up()
+		rebuild()
+	}
+
+	downFn := func() {
+		config.ColumnRight(m.SelectedValue())
+		m.Down()
+		rebuild()
+	}
+
+	toggleFn := func() {
+		config.ColumnToggle(m.SelectedValue())
+		rebuild()
+	}
+
+	rebuild()
+
+	HandleKeys("up", m.Up)
+	HandleKeys("down", m.Down)
+	HandleKeys("enter", toggleFn)
+	HandleKeys("pgup", upFn)
+	HandleKeys("pgdown", downFn)
+
+	ui.Handle("/sys/kbd/x", func(ui.Event) { toggleFn() })
+	ui.Handle("/sys/kbd/<enter>", func(ui.Event) { toggleFn() })
+
+	HandleKeys("exit", func() {
+		cSource, err := cursor.cSuper.Get()
+		if err == nil {
+			for _, c := range cSource.All() {
+				c.RecreateWidgets()
+			}
+		}
 		ui.StopLoop()
 	})
 
@@ -173,7 +258,7 @@ func ContainerMenu() MenuFn {
 			ui.StopLoop()
 		})
 	}
-	if c.Meta["state"] != "exited" || c.Meta["state"] != "created" {
+	if c.Meta["state"] != "exited" && c.Meta["state"] != "created" {
 		ui.Handle("/sys/kbd/p", func(ui.Event) {
 			if c.Meta["state"] == "paused" {
 				selected = "unpause"
@@ -202,7 +287,7 @@ func ContainerMenu() MenuFn {
 	})
 
 	ui.Handle("/sys/kbd/<enter>", func(ui.Event) {
-		selected = m.SelectedItem().Val
+		selected = m.SelectedValue()
 		ui.StopLoop()
 	})
 	ui.Handle("/sys/kbd/", func(ui.Event) {
@@ -273,10 +358,17 @@ func ExecShell() MenuFn {
 
 	ui.DefaultEvtStream.ResetHandlers()
 	defer ui.DefaultEvtStream.ResetHandlers()
-
-	shell := config.Get("shell")
-	if err := c.Exec([]string{shell.Val, "-c", "printf '\\e[0m\\e[?25h' && clear && " + shell.Val}); err != nil {
-		log.Fatal(err)
+	// Detect and execute default shell in container.
+	// Execute Ash shell command: /bin/sh -c
+	// Reset colors: printf '\e[0m\e[?25h'
+	// Clear screen
+	// Run default shell for the user. It's configured in /etc/passwd and looks like root:x:0:0:root:/root:/bin/bash:
+	//  1. Get current user id: id -un
+	//  2. Find user's line in /etc/passwd by grep
+	//  3. Extract default user's shell by cutting seven's column separated by :
+	//  4. Execute the shell path with eval
+	if err := c.Exec([]string{"/bin/sh", "-c", "printf '\\e[0m\\e[?25h' && clear && eval `grep ^$(id -un): /etc/passwd | cut -d : -f 7-`"}); err != nil {
+		log.StatusErr(err)
 	}
 
 	return nil
@@ -321,7 +413,7 @@ func Confirm(txt string, fn func()) MenuFn {
 		ui.Handle("/sys/kbd/y", func(ui.Event) { yes() })
 
 		ui.Handle("/sys/kbd/<enter>", func(ui.Event) {
-			switch m.SelectedItem().Val {
+			switch m.SelectedValue() {
 			case "cancel":
 				no()
 			case "yes":

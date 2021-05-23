@@ -10,31 +10,6 @@ import (
 
 const colSpacing = 1
 
-// per-column width. 0 == auto width
-var colWidths = []int{
-	5, // status
-	0, // name
-	0, // cid
-	0, // cpu
-	0, // memory
-	0, // net
-	0, // io
-	4, // pids
-}
-
-// Calculate per-column width, given total width
-func calcWidth(width int) int {
-	spacing := colSpacing * len(colWidths)
-	var staticCols int
-	for _, w := range colWidths {
-		width -= w
-		if w == 0 {
-			staticCols++
-		}
-	}
-	return (width - spacing) / staticCols
-}
-
 func centerParText(p *ui.Par) {
 	var text string
 	var padding string
